@@ -10,8 +10,6 @@ GCODE_COMMANDS_SUPPORTED_PARAMETERS = {
 
 
 def get_instructions_list_from_gcode(gcode_file_path):
-    out_instruction_list = []
-
     with open(gcode_file_path) as gcode_file:
         out_instruction_list = gcode_file.readlines()
 
@@ -21,7 +19,7 @@ def get_instructions_list_from_gcode(gcode_file_path):
 def preprocess_gcode_instructions(gcode_instructions_list):
     out_preprocessed_gcode_instructions = gcode_instructions_list
 
-    # delete comments TODO: maybe in the future these comments can be useful
+    # delete comments
     out_preprocessed_gcode_instructions = [gcode_instruction.split(";")[0] for gcode_instruction in
                                            out_preprocessed_gcode_instructions]
 
@@ -34,12 +32,11 @@ def preprocess_gcode_instructions(gcode_instructions_list):
     out_preprocessed_gcode_instructions = [gcode_instruction.strip() for gcode_instruction
                                            in out_preprocessed_gcode_instructions]
 
-    # ignore non-supported g-code commands (TODO: this can change in the future)
+    # ignore non-supported g-code commands
     out_preprocessed_gcode_instructions = [gcode_instruction for gcode_instruction in
                                            out_preprocessed_gcode_instructions
                                            if any(supported_gcode_command in gcode_instruction for
                                                   supported_gcode_command in SUPPORTED_GCODE_COMMANDS)]
-
 
     # delete non-supported parameters
     aux_gcode_instructions = []
@@ -48,8 +45,8 @@ def preprocess_gcode_instructions(gcode_instructions_list):
         command = list_gcode_instruction[0]
         # get only supported parameters
         list_cleaned_parameters = [parameter for parameter in list_gcode_instruction if parameter != command and
-                           any(supported_parameter in parameter for
-                                                  supported_parameter in GCODE_COMMANDS_SUPPORTED_PARAMETERS[command])]
+                                   any(supported_parameter in parameter for
+                                       supported_parameter in GCODE_COMMANDS_SUPPORTED_PARAMETERS[command])]
         cleaned_gcode_instruction = [command]
         for parameter in list_cleaned_parameters:
             cleaned_gcode_instruction.append(parameter)
@@ -63,6 +60,7 @@ def preprocess_gcode_instructions(gcode_instructions_list):
                                            out_preprocessed_gcode_instructions if len(gcode_instruction) > 1]
 
     return out_preprocessed_gcode_instructions
+
 
 def simulate_lines_abaqus(list_lines):
     # s = mdb.models['Model-1'].ConstrainedSketch(name='__profile__',
@@ -79,6 +77,7 @@ def simulate_lines_abaqus(list_lines):
     # zoom on simulated part
     # session.viewports['Viewport: 1'].view.fitView()
 
+
 def get_numerical_difference_dictionaries(dict_1, dict_2):
     out_dict_difference = {}
     # Dictionaries should have same keys
@@ -90,79 +89,47 @@ def get_numerical_difference_dictionaries(dict_1, dict_2):
 
 def simmulate_gcode_instructions(list_gcode_instructions):
     machine_position = {"X": None, "Y": None, "Z": None}
-    line_starting_point = {"X": None, "Y": None, "Z": None}
+    is_there_first_starting_point = False
     lines_to_simulate = []
     for gcode_instruction in list_gcode_instructions:
         command = gcode_instruction[0]
         parameters_concat_values = [code for code in gcode_instruction if command != code]
 
-        # TODO separate when it is G0 and G1, changing machine position or writing line
+        # create dictionary with available params and respective values
+        dict_instruction_parameters = {}
+        for parameter_concat_value in parameters_concat_values:
+            parameter = parameter_concat_value[0]
+            value = parameter_concat_value.replace(parameter, '')
+            dict_instruction_parameters[parameter] = float(value)
 
-        if command == "G0" or command == "G1":
-            line_end_point = {}
-            # get available params with respective values
-            dict_parameters_values = {}
-            for parameter_concat_value in parameters_concat_values:
-                parameter = parameter_concat_value[0]
-                value = parameter_concat_value.replace(parameter, '')
-                dict_parameters_values[parameter] = float(value)
+        if command == "G0":  # only change machine position
+            # update machine position
+            machine_position.update(dict_instruction_parameters)
 
-            # verify if we already have all necessary parameters
-            if len(dict_parameters_values) < 3:
-                # add missing parameters from machine position coordinates
+        elif command == "G1":  # write line
+            # we need to have a valid starting point
+            if None in machine_position.values():
+                machine_position.update(dict_instruction_parameters)
+
+            elif not is_there_first_starting_point:
+                machine_position.update(dict_instruction_parameters)
+                is_there_first_starting_point = True
+
+            else:  # we already have a valid starting point for the line
+                # add line to simulate
                 line_end_point = machine_position.copy()
-                line_end_point.update(dict_parameters_values)
+                line_end_point.update(dict_instruction_parameters)
 
-                # if there is still a missing parameter, do not write line and update aux axis parameters
-                if None in line_end_point.values():
-                    machine_position.update(line_end_point)
-                else:
-                    # if we do not have a valid starting point yet, but we have all parameters, this is the starting point
-                    if None in line_starting_point.values():
-                        line_starting_point.update(line_end_point)
+                lines_to_simulate.append({"starting_point": machine_position.copy(),
+                                          "end_point": line_end_point.copy()})
 
-                    else:
-                        if command == "G1":
-                            # add line to simulate
-                            lines_to_simulate.append({"starting_point": line_starting_point.copy(),
-                            "end_point": line_end_point})
-                            print({"starting_point": line_starting_point.copy(),
-                            "end_point": line_end_point})
-                            line_starting_point.update(line_end_point)
-                            machine_position.update(line_end_point)
+                # print({"starting_point": machine_position.copy(),
+                #        "end_point": line_end_point.copy()})
 
-                        elif command == "G0":
-                            # TODO verificar siguientes 2 lineas
-                            line_starting_point = line_end_point.copy()
-                            machine_position = line_starting_point.copy()
-            else:
-                # if we do not have a valid starting point yet, but we have all parameters, this is the starting point
-                if None in line_starting_point.values():
-                    if command == "G1":
-                        line_starting_point.update(dict_parameters_values)
-
-                    elif command == "G0":
-                        machine_position = line_starting_point.copy()
-
-                # if we already have a valid starting point for the line, we can write a line and update starting point
-                else:
-                    if command == "G1":
-                        line_end_point = dict_parameters_values.copy()
-
-                        # add line to simulate
-                        lines_to_simulate.append({"starting_point": line_starting_point.copy(),
-                                                  "end_point": line_end_point})
-                        print({"starting_point": line_starting_point.copy(),
-                               "end_point": line_end_point})
-                        line_starting_point.update(line_end_point)  # new starting point
-
-                    elif command == "G0":
-                        # TODO verificar siguientes 2 lineas
-                        line_starting_point = line_end_point
-                        machine_position = line_starting_point.copy()
+                # update machine position
+                machine_position.update(dict_instruction_parameters.copy())
 
     # simulate g0 and g1 instructions
-    # print(lines_to_simulate)
     simulate_lines_abaqus(lines_to_simulate)
 
 
@@ -172,8 +139,6 @@ def simulate_gcode_file(gcode_filename="file_example.gcode"):
 
     # pre-process gcode instructions list
     gcode_instructions_list = preprocess_gcode_instructions(gcode_instructions_list)
-
-    # print(gcode_instructions_list)
 
     # simmulate every G-code instruction
     simmulate_gcode_instructions(gcode_instructions_list)
